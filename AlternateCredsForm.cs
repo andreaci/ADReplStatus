@@ -22,7 +22,6 @@ namespace ADReplStatus
             if (UsernameTextBox.Text.Length > 0 && PasswordTextBox.Text.Length > 0)
             {
                 ADReplStatusForm.gUsername = UsernameTextBox.Text;
-
                 ADReplStatusForm.gPassword = PasswordTextBox.Text;
 
                 this.Dispose();
@@ -45,19 +44,16 @@ namespace ADReplStatus
                     if (control is Label)
                     {
                         ((Label)control).BackColor = Color.FromArgb(32, 32, 32);
-
                         ((Label)control).ForeColor = Color.White;
                     }
                     else if (control is TextBox)
                     {
                         ((TextBox)control).BackColor = Color.FromArgb(32, 32, 32);
-
                         ((TextBox)control).ForeColor = Color.White;
                     }
                     else if (control is Button)
                     {
                         ((Button)control).BackColor = Color.FromArgb(32, 32, 32);
-
                         ((Button)control).ForeColor = Color.White;
                     }
                 }

@@ -23,19 +23,12 @@ namespace ADReplStatus
             if (ADReplStatusForm.gDarkMode == true)
             {
                 this.BackColor = Color.FromArgb(32, 32, 32);
-
                 EnterForestNameLabel.BackColor = Color.FromArgb(32, 32, 32);
-
                 EnterForestNameLabel.ForeColor = Color.White;
-
                 SetForestNameTextBox.BackColor = Color.FromArgb(32, 32, 32);
-
                 SetForestNameTextBox.ForeColor = Color.White;
-
                 SetForestNameButton.BackColor = Color.FromArgb(32, 32, 32);
-
                 SetForestNameButton.ForeColor = Color.White;
-
                 SaveForestCheckBox.ForeColor = Color.White;
             }
         }

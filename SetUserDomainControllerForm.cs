@@ -60,14 +60,10 @@ namespace ADReplStatus
 
         private void SetUserDomainControllerForm_Load(object sender, EventArgs e)
         {
-            if(ADReplStatusForm.gUseUserDomainController)
-            {
+            SetUserDomainControllerTextBox.Text = string.Empty;
+
+            if (ADReplStatusForm.gUseUserDomainController)
                 SetUserDomainControllerTextBox.Text = ADReplStatusForm.gUserDomainController;
-            }
-            else
-            {
-                SetUserDomainControllerTextBox.Text = string.Empty;
-            }
         }
 
         private void SetUserDomainControllerTextBox_KeyDown(object sender, KeyEventArgs e)

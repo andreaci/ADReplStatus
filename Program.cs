@@ -17,7 +17,6 @@ namespace ADReplStatus
             if (!System.IO.File.Exists("ObjectListView.dll"))
             {
                 MessageBox.Show("Could not find ObjectListView.dll. Make sure the file resides in the same directory as this executable.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
                 return;
             }
 

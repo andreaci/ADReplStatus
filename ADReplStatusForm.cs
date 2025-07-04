@@ -1,77 +1,60 @@
-﻿using System;
+﻿using BrightIdeasSoftware;
+using CredentialManagement;
+using Microsoft.Win32;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
 using System.Diagnostics;
-using System.Threading.Tasks;
-using System.Windows.Forms;
 using System.DirectoryServices;
 using System.DirectoryServices.ActiveDirectory;
-using Microsoft.Win32;
-using BrightIdeasSoftware;
-
-using System.Net.NetworkInformation;
+using System.Drawing;
 using System.IO;
-using System.Reflection;
-using System.Threading;
-using System.Net.Sockets;
+using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace ADReplStatus
 {
     public partial class ADReplStatusForm : Form
     {
-        public static bool gLoggingEnabled = false;
+        public static bool gDarkMode;
 
-        public static bool gDarkMode = false;
+        public static List<ADREPLDC> gDCs = new List<ADREPLDC>();
 
-        public static bool gErrorsOnly = false;
-
-        public static string gLogfileName = string.Empty;
+        public static bool gErrorsOnly;
 
         public static string gForestName = string.Empty;
 
-        public static string gUsername = string.Empty;
+        public static string gLogfileName = string.Empty;
+
+        public static bool gLoggingEnabled;
 
         public static string gPassword = string.Empty;
 
         public static string gTarget = string.Empty;
 
-        //Added to allow user controlled DC selection
-        public static bool gUseUserDomainController = false;
         public static string gUserDomainController = string.Empty;
 
-        public static List<ADREPLDC> gDCs = new List<ADREPLDC>();
-        
+        public static string gUsername = string.Empty;
+
+        public static bool gUseUserDomainController;
+
+        private readonly ConcurrentBag<ADREPLDC> discoveredDCs = new ConcurrentBag<ADREPLDC>();
+
         public ADReplStatusForm()
         {
             InitializeComponent();
+
+            DiscoveredDCsUpdated += SyncDiscoveredDCs;
         }
 
-        private void RefreshButton_Click(object sender, EventArgs e)
-        {
-            ProgressPercentLabel.Visible = true;
-
-            ProgressPercentLabel.Text = "0%";
-
-            ActiveForm.Text = $"AD Replication Status Tool - {gForestName}";
-
-            gDCs.Clear();
-            
-
-            foreach (var control in this.Controls)
-            {
-                if (control is Button)
-                {
-                    ((Button)control).Enabled = false;
-                }
-            }
-
-            backgroundWorker1.RunWorkerAsync();
-        }
+        public event Action DiscoveredDCsUpdated;
 
         private void ADReplStatusForm_Load(object sender, EventArgs e)
         {
@@ -92,7 +75,7 @@ namespace ADReplStatus
                     if (key != null)
                     {
                         gForestName = key.GetValue("ForestName", string.Empty).ToString();
-                        
+
                         gDarkMode = Convert.ToBoolean(key.GetValue("DarkMode", false));
                     }
                 }
@@ -102,15 +85,14 @@ namespace ADReplStatus
                 MessageBox.Show($"An error occured while trying to read app settings from the registry!\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
 
-            if (gDarkMode == true)
+            if (gDarkMode)
             {
-                SetDarkMode();                
+                SetDarkMode();
             }
             else
             {
                 SetLightMode();
             }
-
 
             if (string.IsNullOrEmpty(gForestName))
             {
@@ -125,11 +107,11 @@ namespace ADReplStatus
                 {
                     MessageBox.Show("Unable to detect AD forest. You will need to manually enter the AD forest you wish to scan using the 'Manually Set Forest' button.\nThis happens on non-domain joined computers as well as hybrid or Azure AD domain-joined machines.", "Forest Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
-            }            
+            }
         }
 
         private void ADReplStatusForm_Resize(object sender, EventArgs e)
-        {            
+        {
             treeListView1.Top = 68;
 
             treeListView1.Left = 12;
@@ -142,169 +124,102 @@ namespace ADReplStatus
             }
         }
 
+        private void AlternateCredsButton_Click(object sender, EventArgs e)
+        {
+            AlternateCredsForm alternateCredsForm = new AlternateCredsForm();
+
+            if (gLoggingEnabled)
+            {
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] AlternateCreds button was clicked.\n");
+            }
+
+            alternateCredsForm.ShowDialog();
+
+            alternateCredsForm.Dispose();
+        }
+
         private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
         {
             Forest forest = null;
 
             try
             {
-                DirectoryContext ForestContext = null;
+                DirectoryContext forestContext;
+                var credential = new Credential { Target = "ADCredentials" };
+                credential.Load();
 
-                if(gUseUserDomainController)
+                if (credential != null)
                 {
-                    if (gLoggingEnabled)
-                    {
-                       System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Attempting forest discovery against user specified domain controller {gUserDomainController}\n");
-                    }
-
-                    DirectoryEntry entry = null;
-                    if (gUsername.Length > 0)
-                    {
-                        backgroundWorker1.ReportProgress(0, $"Attempting to connect to forest {gForestName} with alternate user {gUsername}.");
-
-                        entry = new DirectoryEntry($"LDAP://{gUserDomainController}/RootDSE", gUsername, gPassword);
-
-                        //Issues a check and throws an exception if the user specified DC does not exist. 
-                        var configNamingContext = entry.Properties["configurationNamingContext"].Value;
-
-                        ForestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName, gUsername, gPassword);
-                    }
-                    else
-                    {
-                        backgroundWorker1.ReportProgress(0, $"Attempting to connect to forest {gForestName} as currently logged-on user.");
-
-                        entry = new DirectoryEntry($"LDAP://{gUserDomainController}/RootDSE");
-
-                        //Issues a check and throws an exception if the user specified DC does not exist. 
-                        var configNamingContext = entry.Properties["configurationNamingContext"].Value;
-
-                        ForestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName);
-                    }
-
-                    forest = Forest.GetForest(ForestContext);
+                    forestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName, credential.Username, credential.Password);
                 }
                 else
                 {
-                    if (gUsername.Length > 0)
-                    {
-                        backgroundWorker1.ReportProgress(0, $"Attempting to connect to forest {gForestName} with alternate user {gUsername}.");
+                    forestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName);
+                }
 
-                        ForestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName, gUsername, gPassword);
-                    }
-                    else
-                    {
-                        backgroundWorker1.ReportProgress(0, $"Attempting to connect to forest {gForestName} as currently logged-on user.");
-
-                        ForestContext = new DirectoryContext(DirectoryContextType.Forest, gForestName);
-                    }
-
-                    forest = Forest.GetForest(ForestContext);
-                }            
+                forest = Forest.GetForest(forestContext);
             }
             catch (Exception ex)
             {
-                if(gUseUserDomainController)
-                {
-                    backgroundWorker1.ReportProgress(0, $"ERROR:Unable to find AD forest:{gForestName}\nUsing user specified target domain controller:{gUserDomainController}\n{ex.Message}\n");
-                }
-                else
-                {
-                    backgroundWorker1.ReportProgress(0, $"ERROR:Unable to find AD forest:{gForestName}\n{ex.Message}\n\nYou probably need to manually enter the forest using the button.");
-                }
+                backgroundWorker1.ReportProgress(0, $"ERROR: Unable to find AD forest: {gForestName} \n{ex.Message}\n");
                 return;
             }
 
             DomainCollection domainCollection = forest.Domains;
-
             backgroundWorker1.ReportProgress(0, $"Found {domainCollection.Count} domains in forest {forest.Name}.");
 
-            int CurrentDC = 0;
-
-            int NumDCs = 0;
-
             foreach (Domain domain in domainCollection)
             {
-                NumDCs += domain.DomainControllers.Count;
-            }
-
-            foreach (Domain domain in domainCollection)
-            {
-                DomainControllerCollection DCs = domain.DomainControllers;                
-
-                foreach (DomainController dc in DCs)
-                {                    
-                    ADREPLDC adrepldc = new ADREPLDC();
-                    
-                    adrepldc.Name = dc.Name;
-
-                    adrepldc.DomainName = domain.Name;
+                Parallel.ForEach(domain.DomainControllers.Cast<DomainController>(), dc =>
+                {
+                    ADREPLDC adrepldc = new ADREPLDC { Name = dc.Name, DomainName = domain.Name };
+                    bool discoveryIssues = false;
 
                     try
                     {
-                        adrepldc.Site = dc.SiteName;                        
+                        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                        {
+                            adrepldc.Site = dc.SiteName;
+                        }
                     }
                     catch (Exception ex)
                     {
-                        backgroundWorker1.ReportProgress((int)(((float)CurrentDC / (float)NumDCs) * 100), $"Failed to contact DC {adrepldc.Name} and fetch site name:{ex.Message}");
-
+                        backgroundWorker1.ReportProgress(0, $"Failed to contact DC {dc.Name} for site name: {ex.Message}");
                         adrepldc.Site = "Unknown";
-
-                        adrepldc.DiscoveryIssues = true;
+                        discoveryIssues = true;
                     }
 
                     try
                     {
-                        adrepldc.IsGC = dc.IsGlobalCatalog().ToString();                        
+                        adrepldc.IsGC = dc.IsGlobalCatalog().ToString();
                     }
                     catch (Exception ex)
                     {
-                        backgroundWorker1.ReportProgress((int)(((float)CurrentDC / (float)NumDCs) * 100), $"Failed to contact DC {adrepldc.Name} and determine global catalog status:{ex.Message}");
-
+                        backgroundWorker1.ReportProgress(0, $"Failed to determine GC status for {dc.Name}: {ex.Message}");
                         adrepldc.IsGC = "Unknown";
-
-                        adrepldc.DiscoveryIssues = true;
+                        discoveryIssues = true;
                     }
 
                     try
                     {
                         using (DirectoryEntry directoryEntry = new DirectoryEntry("LDAP://" + dc.Name))
+                        using (DirectorySearcher search = new DirectorySearcher(directoryEntry))
                         {
-                            using (DirectorySearcher search = new DirectorySearcher(directoryEntry))
-                            {
-                                search.ClientTimeout = new TimeSpan(0, 0, 20);
-
-                                search.Filter = $"(samaccountname={dc.Name.Split('.')[0]}$)";
-
-                                search.PropertiesToLoad.Add("msDS-isRODC");
-
-                                SearchResult result = search.FindOne();
-
-                                if (result == null || result.Properties["msDS-isRODC"].Count == 0)
-                                {
-                                    throw new Exception("msDS-isRODC attribute not found!");
-                                }
-
-                                if ((bool)result.Properties["msDS-isRODC"][0] == true)
-                                {
-                                    adrepldc.IsRODC = "True";
-                                }
-                                else
-                                {
-                                    adrepldc.IsRODC = "False";
-                                }
-                            }
-                        }                        
+                            search.ClientTimeout = TimeSpan.FromSeconds(30);
+                            search.Filter = $"(samaccountname={dc.Name.Split('.')[0]}$)";
+                            search.PropertiesToLoad.Add("msDS-isRODC");
+                            SearchResult result = search.FindOne();
+                            adrepldc.IsRODC = result?.Properties.Contains("msDS-isRODC") == true && (bool)result.Properties["msDS-isRODC"][0] ? "True" : "False";
+                        }
                     }
                     catch (Exception ex)
                     {
-                        backgroundWorker1.ReportProgress((int)(((float)CurrentDC / (float)NumDCs) * 100), $"Failed to determine RODC status for {dc.Name}:{ex.Message}");
-
+                        backgroundWorker1.ReportProgress(0, $"Failed to determine RODC status for {dc.Name}: {ex.Message}");
                         adrepldc.IsRODC = "Unknown";
-
-                        adrepldc.DiscoveryIssues = true;
+                        discoveryIssues = true;
                     }
 
-                    if (adrepldc.DiscoveryIssues == false)
+                    if (!discoveryIssues)
                     {
                         try
                         {
@@ -315,45 +230,15 @@ namespace ADReplStatus
                         }
                         catch (Exception ex)
                         {
-                            backgroundWorker1.ReportProgress((int)(((float)CurrentDC / (float)NumDCs) * 100), $"Failed to determine replication neighbors and repl status for {dc.Name}:{ex.Message}");
-
-                            adrepldc.DiscoveryIssues = true;
+                            backgroundWorker1.ReportProgress(0, $"Failed to determine replication neighbors for {dc.Name}: {ex.Message}");
+                            discoveryIssues = true;
                         }
                     }
-                    
-                    gDCs.Add(adrepldc);
 
-                    CurrentDC++;
-
-                    backgroundWorker1.ReportProgress((int)(((float)CurrentDC / (float)NumDCs) * 100), "UPDATEPERCENT");
-                }
-            }
-
-            
-
-            treeListView1.SetObjects(gDCs);
-
-            treeListView1.CanExpandGetter = delegate (object x) 
-            {
-                return (x is ADREPLDC);
-            };
-
-            treeListView1.ChildrenGetter = delegate (object x)
-            {
-                return ((ADREPLDC)x).ReplicationPartners;
-            };
-        }
-
-        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-        {
-            ProgressPercentLabel.Visible = false;            
-
-            foreach (var control in this.Controls)
-            {
-                if (control is Button)
-                {
-                    ((Button)control).Enabled = true;
-                }
+                    adrepldc.DiscoveryIssues = discoveryIssues;
+                    discoveredDCs.Add(adrepldc);
+                    OnDiscoveredDCsUpdated();
+                });
             }
         }
 
@@ -361,7 +246,7 @@ namespace ADReplStatus
         {
             if (gLoggingEnabled)
             {
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {e.UserState}\n");
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {e.UserState}\n");
             }
 
             if (e.UserState.ToString().StartsWith("ERROR:"))
@@ -374,431 +259,26 @@ namespace ADReplStatus
             }
         }
 
-        private void EnableLoggingButton_Click(object sender, EventArgs e)
+        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
-            gLoggingEnabled = !gLoggingEnabled;
+            ProgressPercentLabel.Visible = false;
 
-            if (gLoggingEnabled)
+            foreach (var control in Controls)
             {
-                toolTip1.SetToolTip(EnableLoggingButton, "Disable Logging");
-
-                EnableLoggingButton.BackColor = SystemColors.ControlDark;
-
-                DateTime Now = DateTime.Now;
-
-                gLogfileName = $"adreplstatus_{Now.Month}.{Now.Day}.{Now.Year}.{Now.Hour}.{Now.Minute}.{Now.Second}.log";
-
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Logging enabled.\n");
-            }
-            else
-            {
-                toolTip1.SetToolTip(EnableLoggingButton, "Enable Logging");
-
-                if (gDarkMode == true)
+                if (control is Button button)
                 {
-                    EnableLoggingButton.BackColor = Color.FromArgb(32, 32, 32);
-                }
-                else
-                {
-                    EnableLoggingButton.BackColor = SystemColors.Control;
-                }
-
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Logging disabled.\n");
-            }
-        }
-
-        private void SetForestButton_Click(object sender, EventArgs e)
-        {
-            SetForestNameForm setForestNameForm = new SetForestNameForm();
-
-            if (gLoggingEnabled)
-            {
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] SetForestName button was clicked.\n");
-            }
-
-            setForestNameForm.ShowDialog();
-
-            setForestNameForm.Dispose();
-        }
-
-        private void AlternateCredsButton_Click(object sender, EventArgs e)
-        {
-            AlternateCredsForm alternateCredsForm = new AlternateCredsForm();
-
-            if (gLoggingEnabled)
-            {
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] AlternateCreds button was clicked.\n");
-            }
-
-            alternateCredsForm.ShowDialog();
-
-            alternateCredsForm.Dispose();
-        }
-
-        private void treeListView1_FormatRow(object sender, BrightIdeasSoftware.FormatRowEventArgs e)
-        {
-            if (e.Model is ADREPLDC)
-            {
-                ADREPLDC dc = (ADREPLDC)e.Model;
-
-                if (dc.DiscoveryIssues == true)
-                {
-                    e.Item.BackColor = Color.Red;
-
-                    e.Item.ForeColor = Color.White;
-                }
-                else
-                {
-                    if (gDarkMode == true)
-                    {
-                        e.Item.ForeColor = Color.White;
-                    }                    
+                    button.Enabled = true;
                 }
             }
-            else if (e.Model is ReplicationNeighbor)
-            {
-                ReplicationNeighbor neighbor = (ReplicationNeighbor)e.Model;
-
-                if (neighbor.ConsecutiveFailureCount > 0)
-                {
-                    e.Item.BackColor = Color.Red;
-
-                    e.Item.ForeColor = Color.White;
-                }
-                else
-                {
-                    if (gDarkMode == true)
-                    {
-                        e.Item.ForeColor = Color.White;
-                    }
-                }
-            }
-        }
-
-        private void ErrorsOnlyButton_Click(object sender, EventArgs e)
-        {
-            gErrorsOnly = !gErrorsOnly;
-
-            if (gErrorsOnly == true)
-            {
-                toolTip1.SetToolTip(ErrorsOnlyButton, "Show Everything");
-
-                ErrorsOnlyButton.BackColor = SystemColors.ControlDark;
-
-                treeListView1.ExpandAll();
-
-                treeListView1.ModelFilter = new ModelFilter(delegate (object x) 
-                {
-                    if (x is ADREPLDC)
-                    {
-                        return ((ADREPLDC)x).DiscoveryIssues;
-                    }
-                    else if (x is ReplicationNeighbor)
-                    {
-                        return (((ReplicationNeighbor)x).ConsecutiveFailureCount > 0);                        
-                    }
-
-                    return false;            
-                });
-            }
-            else
-            {
-                toolTip1.SetToolTip(ErrorsOnlyButton, "Show Errors Only");
-
-                if (gDarkMode == true)
-                {
-                    ErrorsOnlyButton.BackColor = Color.FromArgb(32, 32, 32);
-                }
-                else
-                {
-                    ErrorsOnlyButton.BackColor = SystemColors.Control;
-                }
-
-                treeListView1.ModelFilter = null;
-            }
-        }
-
-        private void DCNameColumn_RightClick(object sender, CellRightClickEventArgs e)
-        {
-            try
-            {
-                //Only display the menu in the context of the "DC Name" column
-                if (e.Column.Text == "DC Name")
-                {
-                    //Only display the menu if the cell is populated
-                    if (this.treeListView1.SelectedItem.Text != "")
-                    {
-                        //Create the menustrip
-                        ContextMenuStrip diagnosticMenu = new ContextMenuStrip();
-
-                        //Add menuItem click handler
-                        diagnosticMenu.ItemClicked += new ToolStripItemClickedEventHandler(diagnosticMenuSelector);
-
-                        //Create a List view of all the diagnostics we want to add
-                        ObjectListView olv = e.ListView;
-
-                        //Add the "Ping" option
-                        ToolStripMenuItem pingMenuItem = new ToolStripMenuItem(String.Format($"Ping"));
-                        diagnosticMenu.Items.Add(pingMenuItem);
-
-                        //Add the "RDP" option
-                        ToolStripMenuItem rdpMenuItem = new ToolStripMenuItem(String.Format($"Initiate RDP connection"));
-                        diagnosticMenu.Items.Add(rdpMenuItem);
-
-                        //Add the "Enter-PSSession" option
-                        ToolStripMenuItem enterPSSessionMenuItem = new ToolStripMenuItem(String.Format($"Enter PowerShell session"));
-                        diagnosticMenu.Items.Add(enterPSSessionMenuItem);
-
-                        //Add the "Port Tester" option
-                        ToolStripMenuItem portTesterMenuItem = new ToolStripMenuItem(String.Format($"Port Tester"));
-                        diagnosticMenu.Items.Add(portTesterMenuItem);
-
-                        //Actually attach the menu to the cell
-                        e.MenuStrip = diagnosticMenu;
-                    }
-                }
-            }
-            catch
-            {
-                //Do nothing, the user simply right-clicked somewhere else, this is the handler ONLY when the selected column is "DC name"
-            }
-        }
-
-        private void diagnosticMenuSelector(object sender, ToolStripItemClickedEventArgs e)
-        {
-            switch(e.ClickedItem.ToString())
-            {
-                case "Ping":
-                    if (ADReplStatusForm.gLoggingEnabled)
-                    {
-                        System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Diagnostic ping menu opened.\n");
-                    }
-                    diagnosticPing(sender, e);
-                    break;
-                case "Initiate RDP connection":
-                    diagnosticRdp(sender,e);
-                    break;
-                case "Enter PowerShell session":
-                    diagnosticPSSession(sender, e);
-                    break;
-                case "Port Tester":
-                    diagnosticNetworkTester(sender, e);
-                    break;
-            }
-        }
-
-        private void diagnosticPing(object sender, ToolStripItemClickedEventArgs e)
-        {
-            string destination = this.treeListView1.SelectedItem.Text;
-
-            if (destination != "")
-            {
-                using (var dialog = new Form())
-                {
-                    //Set up the ping test window
-                    dialog.Text = "Ping Test";
-                    dialog.StartPosition = FormStartPosition.CenterParent;
-                    dialog.MaximizeBox = false;
-                    dialog.MinimizeBox = false;
-                    dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
-                    dialog.ShowInTaskbar = false;
-                    dialog.Width = 290;
-                    dialog.Height = 150;
-
-                    var ipv4Button = new Button();
-                    ipv4Button.Text = "IPv4";
-                    ipv4Button.Location = new Point(10, 20);
-                    ipv4Button.Click += (s, ev) => RunPing(destination, AddressFamily.InterNetwork, dialog);
-
-                    var ipv6Button = new Button();
-                    ipv6Button.Text = "IPv6";
-                    ipv6Button.Location = new Point(180, 20);
-                    ipv6Button.Click += (s, ev) => RunPing(destination, AddressFamily.InterNetworkV6, dialog);
-
-                    var statusTextBox = new TextBox();
-                    statusTextBox.Multiline = true;
-                    statusTextBox.ReadOnly = true;
-                    statusTextBox.Location = new Point(10, 60);
-                    statusTextBox.Width = dialog.Width - 45;
-                    statusTextBox.Height = dialog.Height - 110;
-                    statusTextBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom | AnchorStyles.Right;
-
-                    dialog.Controls.Add(ipv4Button);
-                    dialog.Controls.Add(ipv6Button);
-                    dialog.Controls.Add(statusTextBox);
-
-                    //Add support for dark mode
-                    if (ADReplStatusForm.gDarkMode == true)
-                    {
-                        dialog.BackColor = Color.FromArgb(32, 32, 32);
-                        foreach (var control in dialog.Controls)
-                        {
-                            if (control is Label)
-                            {
-                                ((Label)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((Label)control).ForeColor = Color.White;
-                            }
-                            else if (control is TextBox)
-                            {
-                                ((TextBox)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((TextBox)control).ForeColor = Color.White;
-                            }
-                            else if (control is Button)
-                            {
-                                ((Button)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((Button)control).ForeColor = Color.White;
-                            }
-                            else if (control is CheckBox)
-                            {
-                                ((CheckBox)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((CheckBox)control).ForeColor = Color.White;
-                            }
-                            else if (control is RadioButton)
-                            {
-                                ((RadioButton)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((RadioButton)control).ForeColor = Color.White;
-                            }
-                            else if (control is ListBox)
-                            {
-                                ((ListBox)control).BackColor = Color.FromArgb(32, 32, 32);
-                                ((ListBox)control).ForeColor = Color.White;
-                            }
-                        }
-                    }
-
-                    dialog.ShowDialog(this);
-                }
-            }
-        }
-
-
-        private async void RunPing(string destination, AddressFamily addressFamily, Form dialog)
-        {
-            try
-            {
-                IPAddress address;
-                if (!IPAddress.TryParse(destination, out address))
-                {
-                    var entry = await Dns.GetHostEntryAsync(destination);
-                    address = entry.AddressList.FirstOrDefault(a => a.AddressFamily == addressFamily);
-                    if (address == null)
-                    {
-                        throw new Exception($"No {addressFamily} address found for {destination}");
-                    }
-                }
-
-                using (var p = new Ping())
-                {
-                    var reply = await p.SendPingAsync(address, 5000, new byte[1], new PingOptions(64, true));
-                    if (reply.Status == IPStatus.Success)
-                    {
-                        string protocol = addressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6";
-                        string successMessage = $"Success:\nDCName: {destination} ({reply.Address.ToString()})\nProtocol: {protocol}";
-                        var statusTextBox = (TextBox)dialog.Controls[2];
-                        statusTextBox.Clear();
-                        statusTextBox.AppendText($"Ping to {destination} using {protocol} ({reply.Address.ToString()}) successful.\n");
-
-                        if (gLoggingEnabled)
-                        {
-                            System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {statusTextBox.Text}");
-                        }
-                    }
-                    else
-                    {
-                        throw new Exception(reply.Status.ToString());
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                dialog.Invoke(new Action(() =>
-                {
-                    string errorMessage = $"Ping failed!\n{ex.Message}\n";
-                    var statusTextBox = (TextBox)dialog.Controls[2];
-                    statusTextBox.Clear();
-                    statusTextBox.AppendText($"{errorMessage}\n");
-                    if (gLoggingEnabled)
-                    {
-                        System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}");
-                    }
-                }));
-            }
-        }
-
-
-        private void diagnosticRdp(object sender, ToolStripItemClickedEventArgs e)
-        {
-            try
-            {
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Initiating RDP connection to {this.treeListView1.SelectedItem.Text}.\n");
-                }
-
-                string args = $"/v {this.treeListView1.SelectedItem.Text}";
-                Process.Start($"mstsc.exe", args);
-            }
-            catch (Exception ex) 
-            {
-                string errorMessage = $"ERROR: RDP to {this.treeListView1.SelectedItem.Text} failed!\n{ex.Message}\n";
-
-                new Thread(() => MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
-
-                if (gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
-                }
-            }
-        }
-
-        private void diagnosticPSSession(object sender, ToolStripItemClickedEventArgs e)
-        {
-            
-            try
-            {
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Initiating remote powershell session to {this.treeListView1.SelectedItem.Text}.\n");
-                }
-                string powershellArgs = $"-NoExit $Cred = Get-Credential;Enter-PSSession -ComputerName {this.treeListView1.SelectedItem.Text} -Credential $Cred";
-                Process.Start($"powershell.exe", powershellArgs);
-            }
-            catch (Exception ex)
-            {
-                string errorMessage = $"ERROR: Enter-PsSession -ComputerName {this.treeListView1.SelectedItem.Text} failed!\n{ex.Message}\n";
-
-                new Thread(() => MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
-
-                if (gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
-                }
-            }
-        }
-
-        private void diagnosticNetworkTester(object sender, ToolStripItemClickedEventArgs e)
-        {
-            gTarget = this.treeListView1.SelectedItem.Text;
-
-            PortTester protocolTesterForm = new PortTester();
-
-            if (gLoggingEnabled)
-            {
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Port Tester button was clicked.\n");
-            }
-
-            protocolTesterForm.ShowDialog();
-
-            protocolTesterForm.Dispose();
         }
 
         private void DarkModeButton_Click(object sender, EventArgs e)
         {
             gDarkMode = !gDarkMode;
 
-            if (gDarkMode == true)
+            if (gDarkMode)
             {
-                SetDarkMode();              
+                SetDarkMode();
             }
             else
             {
@@ -811,7 +291,7 @@ namespace ADReplStatus
 
                 if (key != null)
                 {
-                    if (gDarkMode == true)
+                    if (gDarkMode)
                     {
                         key.SetValue("DarkMode", 1);
                     }
@@ -831,38 +311,419 @@ namespace ADReplStatus
 
                 if (gLoggingEnabled)
                 {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
+                    File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
                 }
             }
         }
 
-        void SetDarkMode()
+        private void DCNameColumn_RightClick(object sender, CellRightClickEventArgs e)
         {
-            toolTip1.SetToolTip(DarkModeButton, "Light Mode");
-
-            this.BackColor = Color.FromArgb(32, 32, 32);
-
-            foreach (var control in this.Controls)
+            try
             {
-                if (control is Button)
+                //Only display the menu in the context of the "DC Name" column
+                if (e.Column.Text == "DC Name")
                 {
-                    ((Button)control).BackColor = Color.FromArgb(32, 32, 32);
-                }                
+                    //Only display the menu if the cell is populated
+                    if (treeListView1.SelectedItem.Text != "")
+                    {
+                        //Create the menustrip
+                        ContextMenuStrip diagnosticMenu = new ContextMenuStrip();
 
-                if (control is Label)
+                        //Add menuItem click handler
+                        diagnosticMenu.ItemClicked += DiagnosticMenuSelector;
+
+                        //Create a List view of all the diagnostics we want to add
+                        ObjectListView olv = e.ListView;
+
+                        //Add the "Ping" option
+                        ToolStripMenuItem pingMenuItem = new ToolStripMenuItem(String.Format("Ping"));
+                        diagnosticMenu.Items.Add(pingMenuItem);
+
+                        //Add the "RDP" option
+                        ToolStripMenuItem rdpMenuItem = new ToolStripMenuItem(String.Format("Initiate RDP connection"));
+                        diagnosticMenu.Items.Add(rdpMenuItem);
+
+                        //Add the "Enter-PSSession" option
+                        ToolStripMenuItem enterPSSessionMenuItem = new ToolStripMenuItem(String.Format("Enter PowerShell session"));
+                        diagnosticMenu.Items.Add(enterPSSessionMenuItem);
+
+                        //Add the "Port Tester" option
+                        ToolStripMenuItem portTesterMenuItem = new ToolStripMenuItem(String.Format("Port Tester"));
+                        diagnosticMenu.Items.Add(portTesterMenuItem);
+
+                        //Actually attach the menu to the cell
+                        e.MenuStrip = diagnosticMenu;
+                    }
+                }
+            }
+            catch
+            {
+                //Do nothing, the user simply right-clicked somewhere else, this is the handler ONLY when the selected column is "DC name"
+            }
+        }
+
+        private void DiagnosticMenuSelector(object sender, ToolStripItemClickedEventArgs e)
+        {
+            switch (e.ClickedItem.ToString())
+            {
+                case "Ping":
+                    if (gLoggingEnabled)
+                    {
+                        File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Diagnostic ping menu opened.\n");
+                    }
+                    DiagnosticPing(sender, e);
+                    break;
+
+                case "Initiate RDP connection":
+                    DiagnosticRdp(sender, e);
+                    break;
+
+                case "Enter PowerShell session":
+                    DiagnosticPSSession(sender, e);
+                    break;
+
+                case "Port Tester":
+                    DiagnosticNetworkTester(sender, e);
+                    break;
+            }
+        }
+
+        private void DiagnosticNetworkTester(object sender, ToolStripItemClickedEventArgs e)
+        {
+            gTarget = treeListView1.SelectedItem.Text;
+
+            PortTester protocolTesterForm = new PortTester();
+
+            if (gLoggingEnabled)
+            {
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Port Tester button was clicked.\n");
+            }
+
+            protocolTesterForm.ShowDialog();
+
+            protocolTesterForm.Dispose();
+        }
+
+        private void DiagnosticPing(object sender, ToolStripItemClickedEventArgs e)
+        {
+            string destination = treeListView1.SelectedItem.Text;
+
+            if (destination != "")
+            {
+                using (var dialog = new Form())
                 {
-                    ((Label)control).BackColor = Color.FromArgb(32, 32, 32);
+                    //Set up the ping test window
+                    dialog.Text = "Ping Test";
+                    dialog.StartPosition = FormStartPosition.CenterParent;
+                    dialog.MaximizeBox = false;
+                    dialog.MinimizeBox = false;
+                    dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                    dialog.ShowInTaskbar = false;
+                    dialog.Width = 290;
+                    dialog.Height = 150;
 
-                    ((Label)control).ForeColor = Color.White;
+                    var ipv4Button = new Button
+                    {
+                        Text = "IPv4",
+                        Location = new Point(10, 20)
+                    };
+                    ipv4Button.Click += async (s, ev) => await RunPing(destination, AddressFamily.InterNetwork, dialog);
+
+                    var ipv6Button = new Button
+                    {
+                        Text = "IPv6",
+                        Location = new Point(180, 20)
+                    };
+                    ipv6Button.Click += async (s, ev) => await RunPing(destination, AddressFamily.InterNetworkV6, dialog);
+
+                    var statusTextBox = new TextBox
+                    {
+                        Multiline = true,
+                        ReadOnly = true,
+                        Location = new Point(10, 60),
+                        Width = dialog.Width - 45,
+                        Height = dialog.Height - 110,
+                        Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom | AnchorStyles.Right
+                    };
+
+                    dialog.Controls.Add(ipv4Button);
+                    dialog.Controls.Add(ipv6Button);
+                    dialog.Controls.Add(statusTextBox);
+
+                    //Add support for dark mode
+                    if (gDarkMode)
+                    {
+                        dialog.BackColor = Color.FromArgb(32, 32, 32);
+                        foreach (var control in dialog.Controls)
+                        {
+                            if (control is Label label)
+                            {
+                                label.BackColor = Color.FromArgb(32, 32, 32);
+                                label.ForeColor = Color.White;
+                            }
+                            else if (control is TextBox textBox)
+                            {
+                                textBox.BackColor = Color.FromArgb(32, 32, 32);
+                                textBox.ForeColor = Color.White;
+                            }
+                            else if (control is Button button)
+                            {
+                                button.BackColor = Color.FromArgb(32, 32, 32);
+                                button.ForeColor = Color.White;
+                            }
+                            else if (control is CheckBox checkBox)
+                            {
+                                checkBox.BackColor = Color.FromArgb(32, 32, 32);
+                                checkBox.ForeColor = Color.White;
+                            }
+                            else if (control is RadioButton radioButton)
+                            {
+                                radioButton.BackColor = Color.FromArgb(32, 32, 32);
+                                radioButton.ForeColor = Color.White;
+                            }
+                            else if (control is ListBox listBox)
+                            {
+                                listBox.BackColor = Color.FromArgb(32, 32, 32);
+                                listBox.ForeColor = Color.White;
+                            }
+                        }
+                    }
+
+                    dialog.ShowDialog(this);
+                }
+            }
+        }
+
+        private void DiagnosticPSSession(object sender, ToolStripItemClickedEventArgs e)
+        {
+            try
+            {
+                if (gLoggingEnabled)
+                {
+                    File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Initiating remote powershell session to {treeListView1.SelectedItem.Text}.\n");
+                }
+                string powershellArgs = $"-NoExit $Cred = Get-Credential;Enter-PSSession -ComputerName {treeListView1.SelectedItem.Text} -Credential $Cred";
+                Process.Start("powershell.exe", powershellArgs);
+            }
+            catch (Exception ex)
+            {
+                string errorMessage = $"ERROR: Enter-PsSession -ComputerName {treeListView1.SelectedItem.Text} failed!\n{ex.Message}\n";
+
+                new Thread(() => MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
+
+                if (gLoggingEnabled)
+                {
+                    File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
+                }
+            }
+        }
+
+        private void DiagnosticRdp(object sender, ToolStripItemClickedEventArgs e)
+        {
+            try
+            {
+                if (gLoggingEnabled)
+                {
+                    File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Initiating RDP connection to {treeListView1.SelectedItem.Text}.\n");
+                }
+
+                string args = $"/v {treeListView1.SelectedItem.Text}";
+                Process.Start("mstsc.exe", args);
+            }
+            catch (Exception ex)
+            {
+                string errorMessage = $"ERROR: RDP to {treeListView1.SelectedItem.Text} failed!\n{ex.Message}\n";
+
+                new Thread(() => MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error));
+
+                if (gLoggingEnabled)
+                {
+                    File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
+                }
+            }
+        }
+
+        private void EnableLoggingButton_Click(object sender, EventArgs e)
+        {
+            gLoggingEnabled = !gLoggingEnabled;
+
+            if (gLoggingEnabled)
+            {
+                toolTip1.SetToolTip(EnableLoggingButton, "Disable Logging");
+
+                EnableLoggingButton.BackColor = SystemColors.ControlDark;
+
+                DateTime Now = DateTime.Now;
+
+                gLogfileName = $"adreplstatus_{Now.Month}.{Now.Day}.{Now.Year}.{Now.Hour}.{Now.Minute}.{Now.Second}.log";
+
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Logging enabled.\n");
+            }
+            else
+            {
+                toolTip1.SetToolTip(EnableLoggingButton, "Enable Logging");
+
+                if (gDarkMode)
+                {
+                    EnableLoggingButton.BackColor = Color.FromArgb(32, 32, 32);
+                }
+                else
+                {
+                    EnableLoggingButton.BackColor = SystemColors.Control;
+                }
+
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] Logging disabled.\n");
+            }
+        }
+
+        private void ErrorsOnlyButton_Click(object sender, EventArgs e)
+        {
+            gErrorsOnly = !gErrorsOnly;
+
+            if (gErrorsOnly)
+            {
+                toolTip1.SetToolTip(ErrorsOnlyButton, "Show Everything");
+
+                ErrorsOnlyButton.BackColor = SystemColors.ControlDark;
+
+                treeListView1.ExpandAll();
+
+                treeListView1.ModelFilter = new ModelFilter((object x) =>
+                {
+                    if (x is ADREPLDC adREPLDC)
+                    {
+                        return adREPLDC.DiscoveryIssues;
+                    }
+                    else if (x is ReplicationNeighbor replicationNeighbor)
+                    {
+                        return replicationNeighbor.ConsecutiveFailureCount > 0;
+                    }
+
+                    return false;
+                });
+            }
+            else
+            {
+                toolTip1.SetToolTip(ErrorsOnlyButton, "Show Errors Only");
+
+                if (gDarkMode)
+                {
+                    ErrorsOnlyButton.BackColor = Color.FromArgb(32, 32, 32);
+                }
+                else
+                {
+                    ErrorsOnlyButton.BackColor = SystemColors.Control;
+                }
+
+                treeListView1.ModelFilter = null;
+            }
+        }
+
+        private void OnDiscoveredDCsUpdated()
+        {
+            DiscoveredDCsUpdated?.Invoke();
+        }
+
+        private void RefreshButton_Click(object sender, EventArgs e)
+        {
+            ProgressPercentLabel.Visible = true;
+
+            ProgressPercentLabel.Text = "0%";
+
+            ActiveForm.Text = $"AD Replication Status Tool - {gForestName}";
+
+            gDCs.Clear();
+
+            foreach (var control in Controls)
+            {
+                if (control is Button button)
+                {
+                    button.Enabled = false;
                 }
             }
 
-            if (gLoggingEnabled == true)
+            backgroundWorker1.RunWorkerAsync();
+        }
+
+        private async Task RunPing(string destination, AddressFamily addressFamily, Form dialog)
+        {
+            try
+            {
+                if (!IPAddress.TryParse(destination, out var address))
+                {
+                    var entry = await Dns.GetHostEntryAsync(destination);
+                    address = entry.AddressList.FirstOrDefault(a => a.AddressFamily == addressFamily);
+                    if (address == null)
+                    {
+                        throw new Exception($"No {addressFamily} address found for {destination}");
+                    }
+                }
+
+                using (var p = new Ping())
+                {
+                    var reply = await p.SendPingAsync(address, 5000, new byte[1], new PingOptions(64, true));
+                    if (reply.Status == IPStatus.Success)
+                    {
+                        string protocol = addressFamily == AddressFamily.InterNetwork ? "IPv4" : "IPv6";
+                        string successMessage = $"Success:\nDCName: {destination} ({reply.Address})\nProtocol: {protocol}";
+                        var statusTextBox = (TextBox)dialog.Controls[2];
+                        statusTextBox.Clear();
+                        statusTextBox.AppendText($"Ping to {destination} using {protocol} ({reply.Address}) successful.\n");
+
+                        if (gLoggingEnabled)
+                        {
+                            File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {statusTextBox.Text}");
+                        }
+                    }
+                    else
+                    {
+                        throw new Exception(reply.Status.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                dialog.Invoke(new Action(() =>
+                {
+                    string errorMessage = $"Ping failed!\n{ex.Message}\n";
+                    var statusTextBox = (TextBox)dialog.Controls[2];
+                    statusTextBox.Clear();
+                    statusTextBox.AppendText($"{errorMessage}\n");
+                    if (gLoggingEnabled)
+                    {
+                        File.AppendAllText(gLogfileName, $"[{DateTime.Now}] {errorMessage}");
+                    }
+                }));
+            }
+        }
+
+        private void SetDarkMode()
+        {
+            toolTip1.SetToolTip(DarkModeButton, "Light Mode");
+
+            BackColor = Color.FromArgb(32, 32, 32);
+
+            foreach (var control in Controls)
+            {
+                if (control is Button button)
+                {
+                    button.BackColor = Color.FromArgb(32, 32, 32);
+                }
+
+                if (control is Label label)
+                {
+                    label.BackColor = Color.FromArgb(32, 32, 32);
+
+                    label.ForeColor = Color.White;
+                }
+            }
+
+            if (gLoggingEnabled)
             {
                 EnableLoggingButton.BackColor = SystemColors.ControlDark;
             }
 
-            if (gErrorsOnly == true)
+            if (gErrorsOnly)
             {
                 ErrorsOnlyButton.BackColor = SystemColors.ControlDark;
             }
@@ -881,33 +742,61 @@ namespace ADReplStatus
             }
         }
 
-        void SetLightMode()
+        private void SetDcButton_Click(object sender, EventArgs e)
+        {
+            SetUserDomainControllerForm setUserDCForm = new SetUserDomainControllerForm();
+
+            if (gLoggingEnabled)
+            {
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] SetUserDomainController button was clicked.\n");
+            }
+
+            setUserDCForm.ShowDialog();
+
+            setUserDCForm.Dispose();
+        }
+
+        private void SetForestButton_Click(object sender, EventArgs e)
+        {
+            SetForestNameForm setForestNameForm = new SetForestNameForm();
+
+            if (gLoggingEnabled)
+            {
+                File.AppendAllText(gLogfileName, $"[{DateTime.Now}] SetForestName button was clicked.\n");
+            }
+
+            setForestNameForm.ShowDialog();
+
+            setForestNameForm.Dispose();
+        }
+
+        private void SetLightMode()
         {
             toolTip1.SetToolTip(DarkModeButton, "Dark Mode");
 
-            this.BackColor = SystemColors.Control;
+            BackColor = SystemColors.Control;
 
-            foreach (var control in this.Controls)
+            foreach (var control in Controls)
             {
-                if (control is Button)
+                if (control is Button button)
                 {
-                    ((Button)control).BackColor = SystemColors.Control;
+                    button.BackColor = SystemColors.Control;
                 }
 
-                if (control is Label)
+                if (control is Label label)
                 {
-                    ((Label)(control)).BackColor = SystemColors.Control;
+                    label.BackColor = SystemColors.Control;
 
-                    ((Label)control).ForeColor = SystemColors.ControlText;
+                    label.ForeColor = SystemColors.ControlText;
                 }
             }
 
-            if (gLoggingEnabled == true)
+            if (gLoggingEnabled)
             {
                 EnableLoggingButton.BackColor = SystemColors.ControlDark;
             }
 
-            if (gErrorsOnly == true)
+            if (gErrorsOnly)
             {
                 ErrorsOnlyButton.BackColor = SystemColors.ControlDark;
             }
@@ -926,37 +815,46 @@ namespace ADReplStatus
             }
         }
 
-        private void SetDcButton_Click(object sender, EventArgs e)
+        private void SyncDiscoveredDCs()
         {
-            SetUserDomainControllerForm setUserDCForm = new SetUserDomainControllerForm();
+            gDCs = discoveredDCs.ToList();
+            treeListView1.SetObjects(gDCs);
+        }
 
-            if (gLoggingEnabled)
+        private void treeListView1_FormatRow(object sender, FormatRowEventArgs e)
+        {
+            if (e.Model is ADREPLDC dc)
             {
-                System.IO.File.AppendAllText(gLogfileName, $"[{DateTime.Now}] SetUserDomainController button was clicked.\n");
+                if (dc.DiscoveryIssues)
+                {
+                    e.Item.BackColor = Color.Red;
+
+                    e.Item.ForeColor = Color.White;
+                }
+                else
+                {
+                    if (gDarkMode)
+                    {
+                        e.Item.ForeColor = Color.White;
+                    }
+                }
             }
+            else if (e.Model is ReplicationNeighbor neighbor)
+            {
+                if (neighbor.ConsecutiveFailureCount > 0)
+                {
+                    e.Item.BackColor = Color.Red;
 
-            setUserDCForm.ShowDialog();
-
-            setUserDCForm.Dispose();
+                    e.Item.ForeColor = Color.White;
+                }
+                else
+                {
+                    if (gDarkMode)
+                    {
+                        e.Item.ForeColor = Color.White;
+                    }
+                }
+            }
         }
     }
-
-    public class ADREPLDC
-    {
-        public string Name;
-
-        public string DomainName;
-
-        public bool DiscoveryIssues = false;
-
-        public string Site;
-
-        public string IsGC;
-
-        public string IsRODC;
-
-        public List<ReplicationNeighbor> ReplicationPartners = new List<ReplicationNeighbor>();
-    }    
-
 }
-
