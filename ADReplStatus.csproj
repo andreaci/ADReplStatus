@@ -73,6 +73,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ADHelper.cs" />
     <Compile Include="ADREPLDC.cs" />
     <Compile Include="ADReplStatusForm.cs">
       <SubType>Form</SubType>
@@ -86,6 +87,8 @@
     <Compile Include="AlternateCredsForm.Designer.cs">
       <DependentUpon>AlternateCredsForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="LoggingManager.cs" />
+    <Compile Include="SettingsManager.cs" />
     <Compile Include="SetUserDomainControllerForm.cs">
       <SubType>Form</SubType>
     </Compile>
