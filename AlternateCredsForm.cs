@@ -26,16 +26,13 @@ namespace ADReplStatus
 
                 this.Dispose();
 
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Using alternate identity: {ADReplStatusForm.gUsername}\n");
-                }
+                LoggingManager.AppendText($"Using alternate identity: {ADReplStatusForm.gUsername}");
             }
         }
 
         private void AlternateCredsForm_Load(object sender, EventArgs e)
         {
-            if (ADReplStatusForm.gDarkMode == true)
+            if (SettingsManager.gDarkMode == true)
             {
                 this.BackColor = Color.FromArgb(32, 32, 32);
 

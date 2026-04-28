@@ -461,7 +461,7 @@ namespace ADReplStatus
                 }
             }
 
-            if (SettingsManager.gLoggingEnabled)
+            if (LoggingManager.gLoggingEnabled)
             {
                 EnableLoggingButton.BackColor = SystemColors.ControlDark;
             }

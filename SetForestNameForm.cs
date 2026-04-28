@@ -20,7 +20,7 @@ namespace ADReplStatus
 
         private void SetForestNameForm_Load(object sender, EventArgs e)
         {
-            if (ADReplStatusForm.gDarkMode == true)
+            if (SettingsManager.gDarkMode == true)
             {
                 this.BackColor = Color.FromArgb(32, 32, 32);
                 EnterForestNameLabel.BackColor = Color.FromArgb(32, 32, 32);
@@ -37,39 +37,11 @@ namespace ADReplStatus
         {
             if (SetForestNameTextBox.Text.Length > 0)
             {
-                ADReplStatusForm.gForestName = SetForestNameTextBox.Text;
-
+                SettingsManager.ADHelperObject.gForestName = SetForestNameTextBox.Text;
                 if (SaveForestCheckBox.Checked)
-                {
-                    try
-                    {                        
-                        var key = Registry.CurrentUser.CreateSubKey("SOFTWARE\\ADREPLSTATUS", true);
+                    SettingsManager.WriteRegKey("ForestName", SetForestNameTextBox.Text);
 
-                        if (key != null)
-                        {
-                            key.SetValue("ForestName", SetForestNameTextBox.Text);
-
-                            key.Dispose();
-                        }                        
-                    }
-                    catch (Exception ex) 
-                    {
-                        string errorMessage = $"ERROR: Failed to write to the HKCU\\ADREPLSTATUS registry key!\n{ex.Message}\n";
-
-                        MessageBox.Show(errorMessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                        if (ADReplStatusForm.gLoggingEnabled)
-                        {
-                            System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
-                        }
-                    }
-                }                
-
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Forest name set to: {ADReplStatusForm.gForestName}\n");
-                }                
-
+                LoggingManager.AppendText($"Forest name set to: {SettingsManager.ADHelperObject.gForestName}\n");
                 this.Dispose();
             }
         }

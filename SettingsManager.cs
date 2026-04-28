@@ -16,13 +16,17 @@ namespace ADReplStatus
         private static bool __darkMode = false;
         public static bool gDarkMode { get { return __darkMode; } set { WriteRegKey("DarkMode", value); __darkMode = value; } }
 
-        private static void WriteRegKey(string keyName, bool value)
+        internal static void WriteRegKey(string keyName, object value)
         {
             var key = Registry.CurrentUser.CreateSubKey("SOFTWARE\\ADREPLSTATUS", true);
 
             if (key != null)
             {
-                key.SetValue(keyName, value ? 1 : 0);
+                if(value is bool)
+                    key.SetValue(keyName, (bool)value ? 1 : 0);
+                else
+                    key.SetValue(keyName, value);
+
                 key.Dispose();
             }
         }

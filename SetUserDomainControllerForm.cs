@@ -25,20 +25,12 @@ namespace ADReplStatus
                 //The user cleared out the input box and clicked set
                 if(SetUserDomainControllerTextBox.Text.Length < 1)
                 {
-                    if (ADReplStatusForm.gLoggingEnabled)
-                    {
-                        System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Clearing user specified domain controller and disabling global. Previous value:{ADReplStatusForm.gUserDomainController}\n");
-                    }
-
+                    LoggingManager.AppendText("Clearing user specified domain controller and disabling global.");
                     ADReplStatusForm.gUseUserDomainController = false;
                 }
                 else
                 {
-                    if (ADReplStatusForm.gLoggingEnabled)
-                    {
-                        System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Changing user specified domain controller to {SetUserDomainControllerTextBox.Text}\n");
-                    }
-
+                    LoggingManager.AppendText($"Changing user specified domain controller to {SetUserDomainControllerTextBox.Text}");
                     ADReplStatusForm.gUserDomainController = SetUserDomainControllerTextBox.Text;
                 }
 
@@ -46,11 +38,8 @@ namespace ADReplStatus
                 return;
             }
 
-            if (ADReplStatusForm.gLoggingEnabled)
-            {
-                System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Setting user specified domain controller to {SetUserDomainControllerTextBox.Text} and enabling global.\n");
-            }
-
+            LoggingManager.AppendText($"Setting user specified domain controller to {SetUserDomainControllerTextBox.Text} and enabling global.");
+            
             ADReplStatusForm.gUseUserDomainController = true;
             ADReplStatusForm.gUserDomainController = SetUserDomainControllerTextBox.Text;
 

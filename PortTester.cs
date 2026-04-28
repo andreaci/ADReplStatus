@@ -95,10 +95,7 @@ namespace ADReplStatus
                 this.results_txtbox.AppendText($"Testing TCP connection to {target} on port {port}:{Environment.NewLine}");
                 await client.ConnectAsync(target, port);
 
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] Connection to {target} was successful on {port}{Environment.NewLine}");
-                }
+                LoggingManager.AppendText($"Connection to {target} was successful on port {port}!");
                 
                 string successMessage = $"Connection successful! {Environment.NewLine}===========================";
                 this.results_txtbox.AppendText(successMessage);
@@ -113,10 +110,7 @@ namespace ADReplStatus
                 string errorMessage = $"ERROR: Connection to {target} using port {port} failed!{Environment.NewLine}{Environment.NewLine}{ex.Message}{Environment.NewLine}";
                 this.results_txtbox.AppendText($"{Environment.NewLine}{errorMessage}{Environment.NewLine}");
 
-                if (ADReplStatusForm.gLoggingEnabled)
-                {
-                    System.IO.File.AppendAllText(ADReplStatusForm.gLogfileName, $"[{DateTime.Now}] {errorMessage}\n");
-                }
+                LoggingManager.Error(errorMessage);
             }
         }
 
@@ -228,7 +222,7 @@ namespace ADReplStatus
 
         private void PortTester_Load(object sender, EventArgs e)
         {
-            if (ADReplStatusForm.gDarkMode == true)
+            if (SettingsManager.gDarkMode == true)
             {
                 this.BackColor = Color.FromArgb(32, 32, 32);
 
