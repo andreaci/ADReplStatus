@@ -15,9 +15,9 @@ namespace ADReplStatus
 {
     internal class ADHelper
     {
-        public string gForestName = string.Empty;
-        public List<ADREPLDC> gDCs = new List<ADREPLDC>();
-        public readonly ConcurrentBag<ADREPLDC> discoveredDCs = new ConcurrentBag<ADREPLDC>();
+        public string gForestName { get; set; } = string.Empty;
+        public List<ADREPLDC> gDCs { get; set; } = new List<ADREPLDC>();
+        public readonly ConcurrentBag<ADREPLDC> discoveredDCs  = new ConcurrentBag<ADREPLDC>();
 
         internal void Init()
         {
@@ -127,6 +127,11 @@ namespace ADReplStatus
                             foreach (ReplicationNeighbor partner in dc.GetAllReplicationNeighbors())
                             {
                                 adrepldc.ReplicationPartners.Add(partner);
+
+                                if(partner.LastSyncResult != 0)
+                                {
+                                    discoveryIssues = true;
+                                }
                             }
                         }
                         catch (Exception ex)
